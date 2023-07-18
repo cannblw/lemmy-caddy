@@ -1,0 +1,82 @@
+version: '3.7'
+
+services:
+  caddy:
+    image: caddy
+    container_name: caddy
+    ports:
+      - 80:80
+      - 443:443
+      - 8536:8536 # Lemmy port running the UI, haven't checked if it's necessary but probably not as it's proxied
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    networks:
+      - lemmy-network
+    restart: unless-stopped
+  
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres
+    env_file: .postgres.env
+    volumes: 
+      - ./volumes/postgres_data:/var/lib/postgresql/data
+    networks:
+      - lemmy-network
+    restart: unless-stopped
+    command:
+      [
+        "postgres",
+        "-c",
+        "session_preload_libraries=auto_explain",
+        "-c",
+        "auto_explain.log_min_duration=5ms",
+        "-c",
+        "auto_explain.log_analyze=true",
+        "-c",
+        "track_activity_query_size=1048576",
+      ]
+
+  lemmy:
+    image: dessalines/lemmy:latest
+    container_name: lemmy
+    networks:
+      - lemmy-network
+    volumes:
+      - ./volumes/lemmy_data/lemmy.hjson:/config/config.hjson:Z
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - pictrs
+  
+  lemmy-ui:
+    image: dessalines/lemmy-ui:latest
+    container_name: lemmy-ui
+    networks:
+      - lemmy-network
+    environment:
+      - LEMMY_UI_LEMMY_INTERNAL_HOST=lemmy:8536
+      - LEMMY_HTTPS=true
+    restart: unless-stopped
+    depends_on:
+      - lemmy
+
+  pictrs:
+    image: asonix/pictrs:0.4.0
+    container_name: pictrs
+    networks:
+      - lemmy-network
+    environment:
+      - PICTRS_OPENTELEMETRY_URL=http://otel:4137 # I don't know what is this, we're not running this container so maybe we can remove it
+      - PICTRS__API_KEY={{your-long-random-api-key-from-the-lemmy.hjson-file}}
+      - PICTRS__MEDIA__VIDEO_CODEC=vp9
+      - PICTRS__MEDIA__GIF__MAX_WIDTH=256
+      - PICTRS__MEDIA__GIF__MAX_HEIGHT=256
+      - PICTRS__MEDIA__GIF__MAX_AREA=65536
+      - PICTRS__MEDIA__GIF__MAX_FRAME_COUNT=400
+    user: 991:991
+    volumes:
+      - ./volumes/lemmy_data/pictrs:/mnt:Z
+    restart: unless-stopped
+
+networks:
+  lemmy-network:
